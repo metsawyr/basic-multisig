@@ -1,11 +1,11 @@
 use super::api::Api;
-use super::transaction::Transactions;
+use super::transaction::WalletTransaction;
 use exonum::api::ServiceApiBuilder;
 use exonum::blockchain::{self, Transaction, TransactionSet};
 use exonum::crypto::Hash;
-use exonum::encoding::Error;
 use exonum::messages::RawTransaction;
 use exonum::storage::Snapshot;
+use failure::Error;
 
 pub struct Service;
 
@@ -18,9 +18,8 @@ impl blockchain::Service for Service {
         1
     }
 
-    fn tx_from_raw(&self, raw: RawTransaction) -> Result<Box<Transaction>, Error> {
-        let tx = Transactions::tx_from_raw(raw)?;
-        Ok(tx.into())
+    fn tx_from_raw(&self, raw: RawTransaction) -> Result<Box<dyn Transaction>, Error> {
+        WalletTransaction::tx_from_raw(raw).map(Into::into)
     }
 
     fn state_hash(&self, _: &Snapshot) -> Vec<Hash> {
@@ -28,6 +27,6 @@ impl blockchain::Service for Service {
     }
 
     fn wire_api(&self, builder: &mut ServiceApiBuilder) {
-        Api::wire(builder)
+        Api::wire(builder);
     }
 }

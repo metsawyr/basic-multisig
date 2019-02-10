@@ -5,8 +5,14 @@ authors = ["Nikk Radetskiy <metsawyr@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-exonum = "0.9.0"
+exonum = "0.10.3"
+exonum-derive = "0.10.0"
 serde = "1.0.0"
 serde_json = "1.0.0"
 serde_derive = "1.0.0"
 failure = "0.1.1"
+protobuf = "2.2.0"
+hex = "0.3.2"
+
+[build-dependencies]
+exonum-build = "0.10.0"

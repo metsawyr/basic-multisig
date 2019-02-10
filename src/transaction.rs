@@ -1,53 +1,183 @@
+use super::proto;
 use super::schema::Schema;
-use super::wallet::{Wallet, Signer};
-use exonum::blockchain::{ExecutionError, ExecutionResult, Transaction};
-use exonum::crypto::PublicKey;
-use exonum::encoding_struct;
-use exonum::messages::Message;
-use exonum::storage::Fork;
+use exonum::blockchain::{ExecutionError, ExecutionResult, Transaction, TransactionContext};
+use exonum::crypto::{Hash, PublicKey};
+use exonum_derive::ProtobufConvert;
 use failure::Fail;
+use serde_derive::{Deserialize, Serialize};
 
-encoding_struct! {
-    struct PendingTx {
-        sender: &PublicKey,
-        recipient: &PublicKey,
-        amount: u64,
-        approvals: Vec<Approval>,
+#[derive(Clone, Debug, ProtobufConvert, Deserialize, Serialize)]
+#[exonum(pb = "proto::PendingTransaction")]
+pub struct PendingTransaction {
+    pub tx_hash: Hash,
+    pub recipient: PublicKey,
+    pub amount: u64,
+    pub approvals: Vec<PublicKey>,
+}
+
+impl PendingTransaction {
+    pub fn new(&tx_hash: &Hash, &recipient: &PublicKey, amount: u64) -> Self {
+        Self {
+            tx_hash,
+            recipient,
+            amount,
+            approvals: vec![],
+        }
     }
 }
 
-encoding_struct! {
-    struct Approval {
-        pub_key: &PublicKey,
+#[derive(Serialize, Deserialize, Clone, Debug, TransactionSet)]
+pub enum WalletTransaction {
+    CreateWallet(CreateWalletTx),
+    AddSigner(AddSignerTx),
+    Transfer(TransferTx),
+    Sign(SignTx),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, ProtobufConvert)]
+#[exonum(pb = "proto::CreateWalletTx")]
+pub struct CreateWalletTx {
+    pub name: String,
+}
+
+impl Transaction for CreateWalletTx {
+    fn execute(&self, mut context: TransactionContext) -> ExecutionResult {
+        let pub_key = &context.author();
+        let hash = context.tx_hash();
+        let mut schema = Schema::new(context.fork());
+
+        if schema.wallet(pub_key).is_some() {
+            Err(TxError::WalletAlreadyExists)?
+        }
+
+        schema.create_wallet(&pub_key, &self.name, &hash);
+        Ok(())
     }
 }
 
-transactions! {
-    pub Transactions {
-        const SERVICE_ID = 1;
+#[derive(Serialize, Deserialize, Clone, Debug, ProtobufConvert)]
+#[exonum(pb = "proto::AddSignerTx")]
+pub struct AddSignerTx {
+    pub signer: PublicKey,
+}
 
-        struct TxCreateWallet {
-            pub_key: &PublicKey,
-            name: &str,
+impl Transaction for AddSignerTx {
+    fn execute(&self, mut context: TransactionContext) -> ExecutionResult {
+        let pub_key = &context.author();
+        let hash = context.tx_hash();
+        let mut schema = Schema::new(context.fork());
+
+        let wallet = match schema.wallet(pub_key) {
+            Some(val) => val,
+            None => Err(TxError::WalletNotFound)?,
+        };
+
+        schema.add_signer(&wallet, &self.signer, &hash);
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, ProtobufConvert)]
+#[exonum(pb = "proto::TransferTx")]
+pub struct TransferTx {
+    pub recipient: PublicKey,
+    pub amount: u64,
+    pub seed: u64,
+}
+
+impl Transaction for TransferTx {
+    fn execute(&self, mut context: TransactionContext) -> ExecutionResult {
+        let pub_key = &context.author();
+        let hash = context.tx_hash();
+        let mut schema = Schema::new(context.fork());
+
+        let sender_wallet = match schema.wallet(pub_key) {
+            Some(val) => val,
+            None => Err(TxError::SenderNotFound)?,
+        };
+
+        let recipient_wallet = match schema.wallet(&self.recipient) {
+            Some(val) => val,
+            None => Err(TxError::RecipientNotFound)?,
+        };
+
+        let amount = self.amount;
+
+        // Check if balance is higher than desired transfer amount
+        if sender_wallet.balance < amount {
+            Err(TxError::InsufficientCurrencyAmount)?;
         }
 
-        struct TxAddSigner {
-            pub_key: &PublicKey,
-            signer: &PublicKey,
+        // Check if wallet has trusted signers assigned, and create pending transaction if truthy
+        // Immediately executes transfer in the other case
+        if sender_wallet.signers.len() > 0 {
+            schema.add_pending_tx(sender_wallet, &hash, &self.recipient, amount, &hash);
+        } else {
+            schema.decrease_wallet_balance(&sender_wallet, amount, &hash);
+            schema.increase_wallet_balance(&recipient_wallet, amount, &hash);
         }
 
-        struct TxTransfer {
-            sender: &PublicKey,
-            recipient: &PublicKey,
-            amount: u64,
-            seed: u64,
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, ProtobufConvert)]
+#[exonum(pb = "proto::SignTx")]
+pub struct SignTx {
+    pub origin: PublicKey,
+    pub tx_hash: Hash,
+}
+
+impl Transaction for SignTx {
+    fn execute(&self, mut context: TransactionContext) -> ExecutionResult {
+        let pub_key = &context.author();
+        let hash = context.tx_hash();
+        let mut schema = Schema::new(context.fork());
+
+        // Wallet, holding pending transactions
+        let mut origin_wallet = match schema.wallet(&self.origin) {
+            Some(val) => val,
+            None => Err(TxError::SenderNotFound)?,
+        };
+
+        let pending_txs = &origin_wallet.pending_txs;
+        let tx_hash = self.tx_hash;
+
+        // Check if pending transaction present in origin wallet
+        let transaction = match pending_txs.iter().find(|item| item.tx_hash == tx_hash) {
+            Some(tx) => tx,
+            None => Err(TxError::PendingTransactionNotFound)?,
+        };
+
+        // Get recipient wallet of pending transaction
+        let recipient_wallet = schema.wallet(&transaction.recipient).unwrap();
+
+        let signers = &origin_wallet.signers;
+
+        // Check if public key exist in origin wallet's `signers` vector
+        if !signers.contains(&pub_key) {
+            Err(TxError::UnauthorizedSigner)?;
         }
 
-        struct TxSign {
-            sender: &PublicKey,
-            origin: &PublicKey,
-            tx_index: u64,
+        // Check if this signer already signed
+        if transaction.approvals.contains(&pub_key) {
+            Err(TxError::AlreadySigned)?;
         }
+
+        let signers_amount = signers.len() as f64;
+        let signs_amount = transaction.approvals.len() as u64;
+
+        // Check if 2/3 majority achieved, and immediately execute transfer if truthy
+        // +2 means +1 for transaction initiator and +1 for current singature that isn't added yet
+        if signs_amount + 2 >= (2f64 * signers_amount / 3f64).floor() as u64 {
+            schema.remove_pending_tx(&origin_wallet, &self.tx_hash, &hash);
+            schema.decrease_wallet_balance(&origin_wallet, transaction.amount, &hash);
+            schema.increase_wallet_balance(&recipient_wallet, transaction.amount, &hash);
+        } else {
+            schema.sign_pending_tx(&origin_wallet, &self.tx_hash, &pub_key, &hash);
+        }
+
+        Ok(())
     }
 }
 
@@ -74,172 +204,14 @@ pub enum TxError {
 
     #[fail(display = "Unauthorized signer")]
     UnauthorizedSigner = 6,
+
+    #[fail(display = "Already signed")]
+    AlreadySigned = 7,
 }
 
 impl From<TxError> for ExecutionError {
     fn from(value: TxError) -> ExecutionError {
         let description = format!("{}", value);
         ExecutionError::with_description(value as u8, description)
-    }
-}
-
-impl Transaction for TxCreateWallet {
-    fn verify(&self) -> bool {
-        self.verify_signature(self.pub_key())
-    }
-
-    fn execute(&self, view: &mut Fork) -> ExecutionResult {
-        let mut schema = Schema::new(view);
-
-        if schema.wallet(self.pub_key()).is_some() {
-            Err(TxError::WalletAlreadyExists)?
-        }
-
-        let wallet = Wallet::new(self.pub_key(), self.name(), 100, vec![], vec![]);
-        println!("Creating a wallet {:?}", wallet);
-        schema.wallets_mut().put(self.pub_key(), wallet);
-
-        Ok(())
-    }
-}
-
-impl Transaction for TxAddSigner {
-    fn verify(&self) -> bool {
-        self.verify_signature(self.pub_key())
-    }
-
-    fn execute(&self, view: &mut Fork) -> ExecutionResult {
-        let mut schema = Schema::new(view);
-
-        let target = match schema.wallet(self.pub_key()) {
-            Some(val) => val,
-            None => Err(TxError::WalletNotFound)?,
-        };
-
-        let signer = self.signer();
-        let target_wallet = target.add_signer(signer);
-
-        println!(
-            "Adding signer `{}` to the wallet {:?}",
-            signer, target_wallet
-        );
-        schema.wallets_mut().put(self.pub_key(), target_wallet);
-
-        Ok(())
-    }
-}
-
-impl Transaction for TxTransfer {
-    fn verify(&self) -> bool {
-        (*self.sender() != *self.recipient()) && self.verify_signature(self.sender())
-    }
-
-    fn execute(&self, view: &mut Fork) -> ExecutionResult {
-        let mut schema = Schema::new(view);
-
-        let sender = match schema.wallet(self.sender()) {
-            Some(val) => val,
-            None => Err(TxError::SenderNotFound)?,
-        };
-
-        let recipient = match schema.wallet(self.recipient()) {
-            Some(val) => val,
-            None => Err(TxError::RecipientNotFound)?,
-        };
-
-        let amount = self.amount();
-
-        // Check if balance is higher than desired transfer amount
-        if sender.balance() < amount {
-            Err(TxError::InsufficientCurrencyAmount)?;
-        }
-
-        let mut wallets = schema.wallets_mut();
-
-        // Check if wallet has trusted signers assigned, and create pending transaction if truthy
-        // Immediately executes transfer in the other case
-        if sender.signers().len() > 0 {
-            println!(
-                "Creating pending transaction of {} coins transfer between wallets {:?} => {:?}",
-                amount, sender, recipient
-            );
-
-            let pending_tx = PendingTx::new(self.sender(), self.recipient(), amount, vec![]);
-            let sender_wallet = sender.add_pending_tx(pending_tx);
-
-            wallets.put(self.sender(), sender_wallet);
-        } else {
-            println!(
-                "Transfering of {} coins between wallets {:?} => {:?}",
-                amount, sender, recipient
-            );
-
-            let sender_wallet = sender.decrease_balance(amount);
-            let recipient_wallet = recipient.increase_balance(amount);
-
-            wallets.put(self.sender(), sender_wallet);
-            wallets.put(self.recipient(), recipient_wallet);
-        }
-
-        Ok(())
-    }
-}
-
-impl Transaction for TxSign {
-    fn verify(&self) -> bool {
-        self.verify_signature(self.sender())
-    }
-
-    fn execute(&self, view: &mut Fork) -> ExecutionResult {
-        let mut schema = Schema::new(view);
-
-        // Wallet, holding pending transactions
-        let mut origin_wallet = match schema.wallet(self.origin()) {
-            Some(val) => val,
-            None => Err(TxError::SenderNotFound)?,
-        };
-
-        let pending_txs = origin_wallet.pending_txs();
-        let tx_index = self.tx_index() as usize;
-
-        // Check if pending transaction present in origin wallet
-        if pending_txs.is_empty() || pending_txs.get(tx_index).is_none() {
-            Err(TxError::PendingTransactionNotFound)?;
-        }
-
-        let transaction = &pending_txs[tx_index];
-
-        // Get recipient wallet of pending transaction
-        let mut recipient_wallet = schema.wallet(transaction.recipient()).unwrap();
-
-        let signers = origin_wallet.signers();
-
-        // Check if public key exist in origin wallet's `signers` vector
-        if !signers.contains(&Signer::new(self.sender())) {
-            Err(TxError::UnauthorizedSigner)?;
-        }
-
-        // Add approval to transaction
-        origin_wallet = origin_wallet.sign_pending_tx(tx_index, Approval::new(self.sender()));
-        
-        let signers_amount = signers.len() as f64;
-        let signs_amount = transaction.approvals().len() as u64;
-
-        let mut wallets = schema.wallets_mut();
-
-        // Check if 2/3 majority achieved, and immediately execute transfer if truthy
-        if signs_amount >= (2f64 * signers_amount / 3f64).floor() as u64 + 1 {
-            let amount = transaction.amount();
-
-            origin_wallet = origin_wallet.remove_pending_tx(tx_index);
-            origin_wallet = origin_wallet.decrease_balance(amount);
-            recipient_wallet = recipient_wallet.increase_balance(amount);
-
-            wallets.put(transaction.recipient(), recipient_wallet);
-        }
-
-        wallets.put(self.origin(), origin_wallet);
-
-        Ok(())
     }
 }

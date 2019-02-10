@@ -19,11 +19,9 @@ pub fn get_node_config() -> NodeConfig {
         ..Default::default()
     };
 
-    let peer_address = "0.0.0.0:2000".parse().unwrap();
-
     NodeConfig {
-        listen_address: peer_address,
-        external_address: peer_address,
+        listen_address: "0.0.0.0:2000".parse().unwrap(),
+        external_address: "0.0.0.0:2000".parse().unwrap(),
         service_public_key,
         service_secret_key,
         consensus_public_key,
@@ -33,6 +31,7 @@ pub fn get_node_config() -> NodeConfig {
         database: Default::default(),
         network: Default::default(),
         api: api_cfg,
+        thread_pool_size: Default::default(),
         mempool: Default::default(),
         services_configs: Default::default(),
     }

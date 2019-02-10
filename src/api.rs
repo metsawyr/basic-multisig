@@ -1,16 +1,17 @@
 use super::schema::Schema;
-use super::transaction::Transactions;
 use super::wallet::Wallet;
-use exonum::api::{Error, Result, ServiceApiBuilder, ServiceApiState};
-use exonum::blockchain::Transaction;
+use exonum::api::{Error as ApiError, Result, ServiceApiBuilder, ServiceApiState};
 use exonum::crypto::{Hash, PublicKey};
-use exonum::node::TransactionSend;
 use serde_derive::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct TransactionRequest {
+    pub raw: String,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionResponse {
     pub tx_hash: Hash,
-    pub tx_index: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -24,6 +25,11 @@ pub struct SignerQuery {
     signer: PublicKey,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TransactionHex {
+    pub tx_body: String,
+}
+
 pub struct Api;
 
 impl Api {
@@ -31,11 +37,7 @@ impl Api {
         builder
             .public_scope()
             .endpoint("v1/wallet", Self::get_wallet)
-            .endpoint("v1/wallets", Self::get_wallets)
-            .endpoint_mut("v1/wallets/signers/add", Self::post_transaction)
-            .endpoint_mut("v1/wallets", Self::post_transaction)
-            .endpoint_mut("v1/wallets/sign", Self::post_transaction)
-            .endpoint_mut("v1/wallets/transfer", Self::post_transaction);
+            .endpoint("v1/wallets", Self::get_wallets);
     }
 
     pub fn get_wallet(state: &ServiceApiState, query: WalletQuery) -> Result<Wallet> {
@@ -44,7 +46,7 @@ impl Api {
 
         schema
             .wallet(&query.wallet)
-            .ok_or_else(|| Error::NotFound("Wallet not found".to_owned()))
+            .ok_or_else(|| ApiError::NotFound("Wallet not found".to_owned()))
     }
 
     pub fn get_wallets(state: &ServiceApiState, _query: ()) -> Result<Vec<Wallet>> {
@@ -54,19 +56,5 @@ impl Api {
         let wallets = idx.values().collect();
 
         Ok(wallets)
-    }
-
-    pub fn post_transaction(
-        state: &ServiceApiState,
-        query: Transactions,
-    ) -> Result<TransactionResponse> {
-        let transaction: Box<Transaction> = query.into();
-        let tx_hash = transaction.hash();
-        state.sender().send(transaction)?;
-
-        Ok(TransactionResponse {
-            tx_hash,
-            tx_index: 0,
-        })
     }
 }
