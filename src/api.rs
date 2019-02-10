@@ -1,6 +1,6 @@
 use super::schema::Schema;
-use super::wallet::Wallet;
 use super::transaction::ApprovedTransaction;
+use super::wallet::Wallet;
 use exonum::api::{Error as ApiError, Result, ServiceApiBuilder, ServiceApiState};
 use exonum::crypto::PublicKey;
 use serde_derive::{Deserialize, Serialize};
@@ -46,7 +46,10 @@ impl Api {
             .ok_or_else(|| ApiError::NotFound("Wallet not found".to_owned()))
     }
 
-    pub fn get_approved_txs(state: &ServiceApiState, query: TransactionsQuery) -> Result<Vec<ApprovedTransaction>> {
+    pub fn get_approved_txs(
+        state: &ServiceApiState,
+        query: TransactionsQuery,
+    ) -> Result<Vec<ApprovedTransaction>> {
         let snapshot = state.snapshot();
         let schema = Schema::new(snapshot);
 
