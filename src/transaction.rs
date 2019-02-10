@@ -135,16 +135,19 @@ impl Transaction for SignTx {
         let mut schema = Schema::new(context.fork());
 
         // Wallet, holding pending transactions
-        let mut origin_wallet = match schema.wallet(&self.origin) {
+        let origin_wallet = match schema.wallet(&self.origin) {
             Some(val) => val,
             None => Err(TxError::SenderNotFound)?,
         };
 
-        let pending_txs = &origin_wallet.pending_txs;
         let tx_hash = self.tx_hash;
 
         // Check if pending transaction present in origin wallet
-        let transaction = match pending_txs.iter().find(|item| item.tx_hash == tx_hash) {
+        let transaction = match origin_wallet
+            .pending_txs
+            .iter()
+            .find(|item| item.tx_hash == tx_hash)
+        {
             Some(tx) => tx,
             None => Err(TxError::PendingTransactionNotFound)?,
         };
@@ -152,10 +155,8 @@ impl Transaction for SignTx {
         // Get recipient wallet of pending transaction
         let recipient_wallet = schema.wallet(&transaction.recipient).unwrap();
 
-        let signers = &origin_wallet.signers;
-
         // Check if public key exist in origin wallet's `signers` vector
-        if !signers.contains(&pub_key) {
+        if !origin_wallet.signers.contains(&pub_key) {
             Err(TxError::UnauthorizedSigner)?;
         }
 
@@ -164,14 +165,16 @@ impl Transaction for SignTx {
             Err(TxError::AlreadySigned)?;
         }
 
-        let signers_amount = signers.len() as f64;
+        let signers_amount = origin_wallet.signers.len() as f64;
         let signs_amount = transaction.approvals.len() as u64;
 
         // Check if 2/3 majority achieved, and immediately execute transfer if truthy
         // +2 means +1 for transaction initiator and +1 for current singature that isn't added yet
         if signs_amount + 2 >= (2f64 * signers_amount / 3f64).floor() as u64 {
-            schema.remove_pending_tx(&origin_wallet, &self.tx_hash, &hash);
-            schema.decrease_wallet_balance(&origin_wallet, transaction.amount, &hash);
+            // QUESTION: is it okay to have origin_wallet as mutable reference,
+            // so we won't produce new instance every time?
+            let new_wallet = schema.remove_pending_tx(&origin_wallet, &self.tx_hash, &hash);
+            schema.decrease_wallet_balance(&new_wallet, transaction.amount, &hash);
             schema.increase_wallet_balance(&recipient_wallet, transaction.amount, &hash);
         } else {
             schema.sign_pending_tx(&origin_wallet, &self.tx_hash, &pub_key, &hash);

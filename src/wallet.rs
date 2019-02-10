@@ -2,7 +2,7 @@ use super::proto;
 use super::transaction::PendingTransaction;
 use exonum::crypto::{Hash, PublicKey};
 use exonum_derive::ProtobufConvert;
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, ProtobufConvert, Serialize, Deserialize)]
 #[exonum(pb = "proto::Wallet")]
@@ -113,7 +113,7 @@ impl Wallet {
             self.balance,
             self.signers,
             pending_txs,
-            self.history_len + 1,
+            self.history_len,
             history_hash,
         )
     }

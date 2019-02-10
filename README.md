@@ -3,15 +3,13 @@ _Exonum implementation of single-noded simple cryptocurrency with multisignature
 
 #### Implementation details
 Multisignature transactions are implemented in the way that wallets hold pending transactions vector that will be executed as soon as 2/3 majority is reached. Pending transactions, in they turn, contain all approvals in respective vector.
+Multisignature is an optional feature, which is enabled only if you have added signer to a personal wallet
 
 #### Running
 To run a node itself, clone this repository and perform `cargo run` in the root of it.
 
-#### Unimplemented
-- Transaction index is currently mocked in returned result after transaction added to 'pending' vector
-- Unit testing
 
-#### API endpoints
+#### Wallets API
 
 Endpoint root: `/api/services/cryptocurrency/v1`
 
@@ -21,45 +19,48 @@ Endpoint root: `/api/services/cryptocurrency/v1`
 ------
 `GET /wallets`: Get all wallets in network.
 
+#### Transactions API
+
+Transaction API is a stardard Exonum Explorer API
+Endpoint root: `api/explorer/v1`
+
 ------
-`POST /wallets`: Create a wallet with specified public key and name.
-Body:
+`POST /transactions`: Broadcast transaction to the network
+
+Endpoint expects to receive serialized signed transaction as hex string
 ```
 {
-    pub_key: <string>,      // Public key of wallet to be created with
-    name: <number>          // Name of the wallet
+    "tx_body": string
 }
 ```
 
-------
-`POST /wallets/signers`: Add a trusted signer to wallet.
-Body:
+There are 4 types of transaction:
+- Create wallet
 ```
 {
-    pub_key: <string>,      // Wallet address to add signer for
-    signer: <string>        // Public key to be added as trusted signer
+    "name": string
 }
 ```
 
-------
-`POST /wallets/transfer`: Send a coin amount to specified public key.
-Body:
+- Add signer
 ```
 {
-    sender: <string>,       // Sender of funds
-    recipient: <string>,    // Receiver of funds
-    amount: <number>,       // Amount of coins to send
-    seed: <number>          // Unique value
+    "signer": public key
 }
 ```
 
-------
-`POST /wallets/sign`: Sign a pending transaction in wallet.
-Body:
+- Transfer funds
+```
+    "recepient": public key,
+    "amount": number,
+    "seed": number
+}
+```
+
+- Sign pending transaction
 ```
 {
-    sender: <string>,       // Signer of transaction
-    origin: <string>,       // Wallet, where pending transaction are stored
-    tx_index: <number>      // Index of transaction in pending_txs vector
+    "origin": public key,
+    "tx_hash": hash
 }
 ```

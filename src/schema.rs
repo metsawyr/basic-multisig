@@ -19,16 +19,8 @@ where
         ProofMapIndex::new("wallets", &self.view)
     }
 
-    pub fn wallet_history(&self, public_key: &PublicKey) -> ProofListIndex<&T, Hash> {
-        ProofListIndex::new_in_family("history", public_key, &self.view)
-    }
-
     pub fn wallet(&self, pub_key: &PublicKey) -> Option<Wallet> {
         self.wallets().get(pub_key)
-    }
-
-    pub fn state_hash(&self) -> Vec<Hash> {
-        vec![self.wallets().merkle_root()]
     }
 }
 
@@ -58,7 +50,12 @@ impl<'a> Schema<&'a mut Fork> {
         self.wallets_mut().put(key, wallet);
     }
 
-    pub fn add_signer(&mut self, wallet: &Wallet, signer: &PublicKey, transaction: &Hash) {
+    pub fn add_signer(
+        &mut self,
+        wallet: &Wallet,
+        signer: &PublicKey,
+        transaction: &Hash,
+    ) -> Wallet {
         let new_wallet = {
             let mut history = self.wallet_history_mut(&wallet.pub_key);
             history.push(*transaction);
@@ -73,7 +70,8 @@ impl<'a> Schema<&'a mut Fork> {
             signer.to_hex(),
             wallet.pub_key.to_hex()
         );
-        self.wallets_mut().put(&wallet.pub_key, new_wallet);
+        self.wallets_mut().put(&wallet.pub_key, new_wallet.clone());
+        new_wallet
     }
 
     pub fn add_pending_tx(
@@ -83,7 +81,7 @@ impl<'a> Schema<&'a mut Fork> {
         recipient: &PublicKey,
         amount: u64,
         transaction: &Hash,
-    ) {
+    ) -> Wallet {
         let new_wallet = {
             let mut history = self.wallet_history_mut(&wallet.pub_key);
             history.push(*transaction);
@@ -101,10 +99,16 @@ impl<'a> Schema<&'a mut Fork> {
             wallet.pub_key.to_hex(),
             recipient.to_hex()
         );
-        self.wallets_mut().put(&wallet.pub_key, new_wallet);
+        self.wallets_mut().put(&wallet.pub_key, new_wallet.clone());
+        new_wallet
     }
 
-    pub fn remove_pending_tx(&mut self, wallet: &Wallet, tx_hash: &Hash, transaction: &Hash) {
+    pub fn remove_pending_tx(
+        &mut self,
+        wallet: &Wallet,
+        tx_hash: &Hash,
+        transaction: &Hash,
+    ) -> Wallet {
         let new_wallet = {
             let mut history = self.wallet_history_mut(&wallet.pub_key);
             history.push(*transaction);
@@ -114,7 +118,9 @@ impl<'a> Schema<&'a mut Fork> {
             wallet.clone().remove_pending_tx(tx_hash, &history_hash)
         };
 
-        self.wallets_mut().put(&wallet.pub_key, new_wallet);
+        self.wallets_mut()
+            .put(&new_wallet.pub_key, new_wallet.clone());
+        new_wallet
     }
 
     pub fn sign_pending_tx(
@@ -123,7 +129,7 @@ impl<'a> Schema<&'a mut Fork> {
         tx_hash: &Hash,
         signer: &PublicKey,
         transaction: &Hash,
-    ) {
+    ) -> Wallet {
         let new_wallet = {
             let mut history = self.wallet_history_mut(&wallet.pub_key);
             history.push(*transaction);
@@ -135,10 +141,17 @@ impl<'a> Schema<&'a mut Fork> {
                 .sign_pending_tx(tx_hash, &signer, &history_hash)
         };
 
-        self.wallets_mut().put(&wallet.pub_key, new_wallet);
+        self.wallets_mut()
+            .put(&new_wallet.pub_key, new_wallet.clone());
+        new_wallet
     }
 
-    pub fn increase_wallet_balance(&mut self, wallet: &Wallet, amount: u64, transaction: &Hash) {
+    pub fn increase_wallet_balance(
+        &mut self,
+        wallet: &Wallet,
+        amount: u64,
+        transaction: &Hash,
+    ) -> Wallet {
         let new_wallet = {
             let mut history = self.wallet_history_mut(&wallet.pub_key);
             history.push(*transaction);
@@ -149,10 +162,17 @@ impl<'a> Schema<&'a mut Fork> {
             wallet.clone().set_balance(balance + amount, &history_hash)
         };
 
-        self.wallets_mut().put(&wallet.pub_key, new_wallet);
+        self.wallets_mut()
+            .put(&new_wallet.pub_key, new_wallet.clone());
+        new_wallet
     }
 
-    pub fn decrease_wallet_balance(&mut self, wallet: &Wallet, amount: u64, transaction: &Hash) {
+    pub fn decrease_wallet_balance(
+        &mut self,
+        wallet: &Wallet,
+        amount: u64,
+        transaction: &Hash,
+    ) -> Wallet {
         let new_wallet = {
             let mut history = self.wallet_history_mut(&wallet.pub_key);
             history.push(*transaction);
@@ -163,6 +183,7 @@ impl<'a> Schema<&'a mut Fork> {
             wallet.clone().set_balance(balance - amount, &history_hash)
         };
 
-        self.wallets_mut().put(&wallet.pub_key, new_wallet);
+        self.wallets_mut().put(&wallet.pub_key, new_wallet.clone());
+        new_wallet
     }
 }
