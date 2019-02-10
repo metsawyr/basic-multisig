@@ -1,22 +1,13 @@
 use super::schema::Schema;
 use super::wallet::Wallet;
+use super::transaction::ApprovedTransaction;
 use exonum::api::{Error as ApiError, Result, ServiceApiBuilder, ServiceApiState};
-use exonum::crypto::{Hash, PublicKey};
+use exonum::crypto::PublicKey;
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-pub struct TransactionRequest {
-    pub raw: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct TransactionResponse {
-    pub tx_hash: Hash,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct WalletQuery {
-    wallet: PublicKey,
+    pub_key: PublicKey,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +21,11 @@ pub struct TransactionHex {
     pub tx_body: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TransactionsQuery {
+    pub pub_key: PublicKey,
+}
+
 pub struct Api;
 
 impl Api {
@@ -37,7 +33,8 @@ impl Api {
         builder
             .public_scope()
             .endpoint("v1/wallet", Self::get_wallet)
-            .endpoint("v1/wallets", Self::get_wallets);
+            .endpoint("v1/wallets", Self::get_wallets)
+            .endpoint("v1/wallet/txs", Self::get_approved_txs);
     }
 
     pub fn get_wallet(state: &ServiceApiState, query: WalletQuery) -> Result<Wallet> {
@@ -45,8 +42,18 @@ impl Api {
         let schema = Schema::new(snapshot);
 
         schema
-            .wallet(&query.wallet)
+            .wallet(&query.pub_key)
             .ok_or_else(|| ApiError::NotFound("Wallet not found".to_owned()))
+    }
+
+    pub fn get_approved_txs(state: &ServiceApiState, query: TransactionsQuery) -> Result<Vec<ApprovedTransaction>> {
+        let snapshot = state.snapshot();
+        let schema = Schema::new(snapshot);
+
+        schema
+            .wallet(&query.pub_key)
+            .ok_or_else(|| ApiError::NotFound("Wallet not found".to_owned()))
+            .map(|wallet| wallet.txs)
     }
 
     pub fn get_wallets(state: &ServiceApiState, _query: ()) -> Result<Vec<Wallet>> {

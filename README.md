@@ -17,6 +17,9 @@ Endpoint root: `/api/services/cryptocurrency/v1`
 `GET /wallet?pub_key=<string>`: Get a wallet by a public key.
 
 ------
+`GET /wallet/txs?pub_key=<string>`: Get approved transactions of a wallet by public key.
+
+------
 `GET /wallets`: Get all wallets in network.
 
 #### Transactions API

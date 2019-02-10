@@ -1,5 +1,5 @@
 use super::proto;
-use super::transaction::PendingTransaction;
+use super::transaction::{ApprovedTransaction, PendingTransaction};
 use exonum::crypto::{Hash, PublicKey};
 use exonum_derive::ProtobufConvert;
 use serde_derive::{Deserialize, Serialize};
@@ -12,6 +12,7 @@ pub struct Wallet {
     pub balance: u64,
     pub signers: Vec<PublicKey>,
     pub pending_txs: Vec<PendingTransaction>,
+    pub txs: Vec<ApprovedTransaction>,
     pub history_len: u64,
     pub history_hash: Hash,
 }
@@ -23,6 +24,7 @@ impl Wallet {
         balance: u64,
         signers: Vec<PublicKey>,
         pending_txs: Vec<PendingTransaction>,
+        txs: Vec<ApprovedTransaction>,
         history_len: u64,
         &history_hash: &Hash,
     ) -> Self {
@@ -32,6 +34,7 @@ impl Wallet {
             balance,
             signers,
             pending_txs,
+            txs,
             history_len,
             history_hash,
         }
@@ -44,6 +47,7 @@ impl Wallet {
             balance,
             self.signers,
             self.pending_txs,
+            self.txs,
             self.history_len + 1,
             history_hash,
         )
@@ -59,6 +63,7 @@ impl Wallet {
             self.balance,
             signers,
             self.pending_txs,
+            self.txs,
             self.history_len + 1,
             history_hash,
         )
@@ -74,6 +79,7 @@ impl Wallet {
             self.balance,
             self.signers,
             pending_txs,
+            self.txs,
             self.history_len + 1,
             history_hash,
         )
@@ -94,6 +100,7 @@ impl Wallet {
             self.balance,
             self.signers,
             pending_txs,
+            self.txs,
             self.history_len + 1,
             history_hash,
         )
@@ -113,7 +120,24 @@ impl Wallet {
             self.balance,
             self.signers,
             pending_txs,
-            self.history_len,
+            self.txs,
+            self.history_len + 1,
+            history_hash,
+        )
+    }
+
+    pub fn add_approved_tx(self, tx: ApprovedTransaction, history_hash: &Hash) -> Self {
+        let mut txs = self.txs.clone();
+        txs.push(tx);
+
+        Self::new(
+            &self.pub_key,
+            &self.name,
+            self.balance,
+            self.signers,
+            self.pending_txs,
+            txs,
+            self.history_len + 1,
             history_hash,
         )
     }

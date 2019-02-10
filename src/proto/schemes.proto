@@ -29,8 +29,9 @@ message Wallet {
   uint64 balance = 3; 
   repeated exonum.PublicKey signers = 4;
   repeated PendingTransaction pending_txs = 5;
-  uint64 history_len = 6;
-  exonum.Hash history_hash = 7;
+  repeated ApprovedTransaction txs = 6;
+  uint64 history_len = 7;
+  exonum.Hash history_hash = 8;
 }
 
 message PendingTransaction {
@@ -38,4 +39,18 @@ message PendingTransaction {
   exonum.PublicKey recipient = 2;
   uint64 amount = 3;
   repeated exonum.PublicKey approvals = 4;
+}
+
+message ApprovedTransaction {
+  exonum.Hash tx_hash = 1;
+  exonum.PublicKey recipient = 2;
+  uint64 amount = 3;
+  repeated exonum.PublicKey approvals = 4;
+  uint64 confirmation_block = 5;
+}
+
+message ConfirmationTx {
+  exonum.Hash tx_hash = 1;
+  exonum.PublicKey sender = 2;
+  uint64 confirmation_block = 3;
 }

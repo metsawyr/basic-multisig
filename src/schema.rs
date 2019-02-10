@@ -1,4 +1,4 @@
-use super::transaction::PendingTransaction;
+use super::transaction::{ApprovedTransaction, PendingTransaction, SignTx};
 use super::wallet::Wallet;
 use exonum::crypto::{Hash, PublicKey};
 use exonum::storage::{Fork, ProofListIndex, ProofMapIndex, Snapshot};
@@ -22,11 +22,19 @@ where
     pub fn wallet(&self, pub_key: &PublicKey) -> Option<Wallet> {
         self.wallets().get(pub_key)
     }
+
+    pub fn awaiting_txs(&self) -> ProofMapIndex<&T, Hash, SignTx> {
+        ProofMapIndex::new("awaiting_txs", &self.view)
+    }
 }
 
 impl<'a> Schema<&'a mut Fork> {
     pub fn wallets_mut(&mut self) -> ProofMapIndex<&mut Fork, PublicKey, Wallet> {
         ProofMapIndex::new("wallets", &mut self.view)
+    }
+
+    pub fn awaiting_txs_mut(&mut self) -> ProofMapIndex<&mut Fork, Hash, SignTx> {
+        ProofMapIndex::new("awaiting_txs", &mut self.view)
     }
 
     pub fn wallet_history_mut(
@@ -43,7 +51,16 @@ impl<'a> Schema<&'a mut Fork> {
 
             let history_hash = history.merkle_root();
 
-            Wallet::new(key, name, 100, vec![], vec![], history.len(), &history_hash)
+            Wallet::new(
+                key,
+                name,
+                100,
+                vec![],
+                vec![],
+                vec![],
+                history.len(),
+                &history_hash,
+            )
         };
 
         println!("Creating a wallet {:?}", wallet);
@@ -76,7 +93,7 @@ impl<'a> Schema<&'a mut Fork> {
 
     pub fn add_pending_tx(
         &mut self,
-        wallet: Wallet,
+        wallet: &Wallet,
         tx_hash: &Hash,
         recipient: &PublicKey,
         amount: u64,
@@ -103,10 +120,11 @@ impl<'a> Schema<&'a mut Fork> {
         new_wallet
     }
 
-    pub fn remove_pending_tx(
+    pub fn confirm_pending_tx(
         &mut self,
         wallet: &Wallet,
-        tx_hash: &Hash,
+        tx: &PendingTransaction,
+        confirmation_block: u64,
         transaction: &Hash,
     ) -> Wallet {
         let new_wallet = {
@@ -115,7 +133,18 @@ impl<'a> Schema<&'a mut Fork> {
 
             let history_hash = history.merkle_root();
 
-            wallet.clone().remove_pending_tx(tx_hash, &history_hash)
+            let approved_tx = ApprovedTransaction {
+                tx_hash: tx.tx_hash,
+                recipient: tx.recipient,
+                amount: tx.amount,
+                approvals: tx.approvals.clone(),
+                confirmation_block,
+            };
+
+            wallet
+                .clone()
+                .remove_pending_tx(&tx.tx_hash, &history_hash)
+                .add_approved_tx(approved_tx, &history_hash)
         };
 
         self.wallets_mut()
@@ -185,5 +214,19 @@ impl<'a> Schema<&'a mut Fork> {
 
         self.wallets_mut().put(&wallet.pub_key, new_wallet.clone());
         new_wallet
+    }
+
+    pub fn add_awaiting_tx(&mut self, service_hash: &Hash, origin_hash: &Hash, sender: &PublicKey) {
+        self.awaiting_txs_mut().put(
+            &service_hash,
+            SignTx {
+                origin: sender.clone(),
+                tx_hash: origin_hash.clone(),
+            },
+        );
+    }
+
+    pub fn remove_awaiting_tx(&mut self, hash: &Hash) {
+        self.awaiting_txs_mut().remove(&hash);
     }
 }

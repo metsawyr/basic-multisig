@@ -26,12 +26,23 @@ impl PendingTransaction {
     }
 }
 
+#[derive(Clone, Debug, ProtobufConvert, Deserialize, Serialize)]
+#[exonum(pb = "proto::ApprovedTransaction")]
+pub struct ApprovedTransaction {
+    pub tx_hash: Hash,
+    pub recipient: PublicKey,
+    pub amount: u64,
+    pub approvals: Vec<PublicKey>,
+    pub confirmation_block: u64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, TransactionSet)]
 pub enum WalletTransaction {
     CreateWallet(CreateWalletTx),
     AddSigner(AddSignerTx),
     Transfer(TransferTx),
     Sign(SignTx),
+    Confirmation(ConfirmationTx),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, ProtobufConvert)]
@@ -96,11 +107,6 @@ impl Transaction for TransferTx {
             None => Err(TxError::SenderNotFound)?,
         };
 
-        let recipient_wallet = match schema.wallet(&self.recipient) {
-            Some(val) => val,
-            None => Err(TxError::RecipientNotFound)?,
-        };
-
         let amount = self.amount;
 
         // Check if balance is higher than desired transfer amount
@@ -110,11 +116,10 @@ impl Transaction for TransferTx {
 
         // Check if wallet has trusted signers assigned, and create pending transaction if truthy
         // Immediately executes transfer in the other case
-        if sender_wallet.signers.len() > 0 {
-            schema.add_pending_tx(sender_wallet, &hash, &self.recipient, amount, &hash);
-        } else {
-            schema.decrease_wallet_balance(&sender_wallet, amount, &hash);
-            schema.increase_wallet_balance(&recipient_wallet, amount, &hash);
+        schema.add_pending_tx(&sender_wallet, &hash, &self.recipient, amount, &hash);
+
+        if sender_wallet.signers.len() == 0 {
+            schema.add_awaiting_tx(&hash, &hash, &pub_key);
         }
 
         Ok(())
@@ -152,9 +157,6 @@ impl Transaction for SignTx {
             None => Err(TxError::PendingTransactionNotFound)?,
         };
 
-        // Get recipient wallet of pending transaction
-        let recipient_wallet = schema.wallet(&transaction.recipient).unwrap();
-
         // Check if public key exist in origin wallet's `signers` vector
         if !origin_wallet.signers.contains(&pub_key) {
             Err(TxError::UnauthorizedSigner)?;
@@ -168,17 +170,52 @@ impl Transaction for SignTx {
         let signers_amount = origin_wallet.signers.len() as f64;
         let signs_amount = transaction.approvals.len() as u64;
 
+        schema.sign_pending_tx(&origin_wallet, &tx_hash, &pub_key, &hash);
         // Check if 2/3 majority achieved, and immediately execute transfer if truthy
         // +2 means +1 for transaction initiator and +1 for current singature that isn't added yet
         if signs_amount + 2 >= (2f64 * signers_amount / 3f64).floor() as u64 {
-            // QUESTION: is it okay to have origin_wallet as mutable reference,
-            // so we won't produce new instance every time?
-            let new_wallet = schema.remove_pending_tx(&origin_wallet, &self.tx_hash, &hash);
-            schema.decrease_wallet_balance(&new_wallet, transaction.amount, &hash);
-            schema.increase_wallet_balance(&recipient_wallet, transaction.amount, &hash);
-        } else {
-            schema.sign_pending_tx(&origin_wallet, &self.tx_hash, &pub_key, &hash);
+            schema.add_awaiting_tx(&hash, &tx_hash, &self.origin);
         }
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, ProtobufConvert)]
+#[exonum(pb = "proto::ConfirmationTx")]
+pub struct ConfirmationTx {
+    pub tx_hash: Hash,
+    pub sender: PublicKey,
+    pub confirmation_block: u64,
+}
+
+impl Transaction for ConfirmationTx {
+    fn execute(&self, mut context: TransactionContext) -> ExecutionResult {
+        let hash = context.tx_hash();
+        let mut schema = Schema::new(context.fork());
+
+        let wallet = match schema.wallet(&self.sender) {
+            Some(val) => val,
+            None => Err(TxError::WalletNotFound)?,
+        };
+
+        let transaction = match wallet
+            .pending_txs
+            .iter()
+            .find(|item| item.tx_hash == self.tx_hash)
+        {
+            Some(tx) => tx,
+            None => Err(TxError::PendingTransactionNotFound)?,
+        };
+
+        // Get recipient wallet of pending transaction
+        let recipient_wallet = schema.wallet(&transaction.recipient).unwrap();
+
+        schema.remove_awaiting_tx(&self.tx_hash);
+        let new_wallet =
+            schema.confirm_pending_tx(&wallet, &transaction, self.confirmation_block, &hash);
+        schema.decrease_wallet_balance(&new_wallet, transaction.amount, &hash);
+        schema.increase_wallet_balance(&recipient_wallet, transaction.amount, &hash);
 
         Ok(())
     }
